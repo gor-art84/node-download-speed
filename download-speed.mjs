@@ -14,16 +14,26 @@ async function main() {
   }
 
   let totalBytes = 0;
-  let totalTimeMs = 0;
+  const requestTimesMs = [];
 
   for (let requestNumber = 1; requestNumber <= REQUEST_COUNT; requestNumber += 1) {
     try {
       const startedAt = performance.now();
-      const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const response = await fetch(url, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
 
       if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error(`HTTP ${response.status}`);
+        let message = `HTTP ${response.status}`;
+
+        try {
+          await response.body?.cancel();
+        } catch (cancelError) {
+          message += `. Ошибка отмены чтения: ${cancelError}`;
+        }
+
+        throw new Error(message);
       }
 
       if (response.body) {
@@ -32,21 +42,31 @@ async function main() {
         }
       }
 
-      totalTimeMs += performance.now() - startedAt;
+      const elapsedMs = performance.now() - startedAt;
+      requestTimesMs.push(elapsedMs);
     } catch (error) {
       throw new Error(`Запрос ${requestNumber}/${REQUEST_COUNT}: ${error.message}`);
     }
   }
 
-  const averageTimeMs = totalTimeMs / REQUEST_COUNT;
+  const totalTimeMs = requestTimesMs.reduce((sum, timeMs) => sum + timeMs, 0);
+  const averageTimeMs = totalTimeMs / requestTimesMs.length;
+  const minTimeMs = Math.min(...requestTimesMs);
+  const maxTimeMs = Math.max(...requestTimesMs);
   const speedMBps = totalBytes / BYTES_PER_MEGABYTE / (totalTimeMs / 1_000);
 
-  console.log(`Среднее время запроса: ${averageTimeMs.toFixed(2)} мс`);
-  console.log(`Общий объём скачанных данных: ${totalBytes} байт`);
-  console.log(`Средняя скорость скачивания: ${speedMBps.toFixed(3)} МБ/с`);
+  return { averageTimeMs, minTimeMs, maxTimeMs, totalBytes, speedMBps };
 }
 
-main().catch((error) => {
+try {
+  const { averageTimeMs, minTimeMs, maxTimeMs, totalBytes, speedMBps } = await main();
+
+  console.log(`Среднее время запроса: ${averageTimeMs.toFixed(2)} мс`);
+  console.log(`Минимальное время запроса: ${minTimeMs.toFixed(2)} мс`);
+  console.log(`Максимальное время запроса: ${maxTimeMs.toFixed(2)} мс`);
+  console.log(`Общий объём скачанных данных: ${totalBytes} байт`);
+  console.log(`Средняя скорость скачивания: ${speedMBps.toFixed(3)} МБ/с`);
+} catch (error) {
   console.error(error.message);
   process.exitCode = 1;
-});
+}
